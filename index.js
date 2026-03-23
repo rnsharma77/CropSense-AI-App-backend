@@ -41,6 +41,18 @@ const { MongoClient, ObjectId } = require('mongodb');
 const MONGODB_URI = process.env.MONGODB_URI;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const PORT = process.env.PORT || 5050;
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://crop-sense-ai-app.vercel.app',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+];
+const ALLOWED_ORIGINS = (
+  process.env.CORS_ORIGINS ||
+  DEFAULT_ALLOWED_ORIGINS.join(',')
+)
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 const GEMINI_FALLBACK_MODELS = [
   GEMINI_MODEL,
   'gemini-2.5-flash',
@@ -49,7 +61,17 @@ const GEMINI_FALLBACK_MODELS = [
 ];
 
 const app = express();
-app.use(cors());
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || ALLOWED_ORIGINS.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`Origin ${origin} is not allowed by CORS.`));
+    },
+  })
+);
 app.use(express.json({ limit: '5mb' }));
 
 let dbClient;
