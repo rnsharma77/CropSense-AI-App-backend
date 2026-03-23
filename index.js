@@ -74,6 +74,14 @@ app.use(
 );
 app.use(express.json({ limit: '5mb' }));
 
+app.get('/', (req, res) =>
+  res.json({
+    ok: true,
+    message: 'CropSense AI backend is running.',
+    health: '/api/health',
+  })
+);
+
 let dbClient;
 let analysesColl;
 let dbReady = false;
