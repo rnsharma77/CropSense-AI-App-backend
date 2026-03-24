@@ -155,8 +155,11 @@ app.post('/api/analysis', async (req, res) => {
       timestamp: new Date(),
       summary: payload.summary || null,
       disease: payload.disease || null,
+      diseaseDetails: payload.diseaseDetails || null,
+      allDetected: Array.isArray(payload.allDetected) ? payload.allDetected : [],
       confidence: payload.confidence || null,
       plantInfo: payload.plantInfo || null,
+      isHealthy: payload.isHealthy === true,
       isDemo: payload.isDemo === true,
       meta: payload.meta || null,
     };
