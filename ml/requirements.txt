@@ -1,0 +1,13 @@
+# CropSense ML — Python dependencies
+# Install: pip install -r server/ml/requirements.txt
+
+torch>=2.1.0
+torchvision>=0.16.0
+scikit-learn>=1.4.0
+numpy>=1.26.0
+Pillow>=10.2.0
+pandas>=2.2.0
+tqdm>=4.66.0
+matplotlib>=3.8.0
+requests>=2.31.0
+pymongo>=4.7.0

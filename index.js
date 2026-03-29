@@ -158,9 +158,15 @@ app.post('/api/analysis', async (req, res) => {
       diseaseDetails: payload.diseaseDetails || null,
       allDetected: Array.isArray(payload.allDetected) ? payload.allDetected : [],
       confidence: payload.confidence || null,
+      severity: payload.severity || null,
+      severityScore: payload.severityScore || 0,
       plantInfo: payload.plantInfo || null,
       isHealthy: payload.isHealthy === true,
       isDemo: payload.isDemo === true,
+      imageBase64: payload.imageBase64 || null,
+      isVerified: false,
+      verifiedLabel: null,
+      usedForTraining: false,
       meta: payload.meta || null,
     };
 
@@ -178,6 +184,57 @@ app.get('/api/health', (req, res) =>
     hasGeminiKey: Boolean(getGeminiApiKey()),
   })
 );
+
+app.get('/api/dataset', async (req, res) => {
+  try {
+    if (!dbReady || !analysesColl) {
+      return res.status(503).json({ error: 'Database not ready. Please try again in a moment.' });
+    }
+
+    const onlyVerified = req.query.onlyVerified !== 'false';
+    const minConf = parseFloat(req.query.minConfidence || '0.5');
+    const filter = {
+      imageBase64: { $ne: null },
+      isDemo: { $ne: true },
+      confidence: { $gte: minConf },
+    };
+
+    if (onlyVerified) {
+      filter.isVerified = true;
+    }
+
+    const records = await analysesColl.find(filter).toArray();
+    const dataset = records
+      .map((record) => ({
+        id: record._id.toString(),
+        label: record.verifiedLabel || record.disease,
+        confidence: record.confidence,
+        severityScore: record.severityScore || 0,
+        imageBase64: record.imageBase64,
+        createdAt: record.timestamp,
+      }))
+      .filter((record) => record.label && record.imageBase64);
+
+    const classes = [...new Set(dataset.map((record) => record.label))].sort();
+
+    if (records.length > 0) {
+      await analysesColl.updateMany(
+        { _id: { $in: records.map((record) => record._id) } },
+        { $set: { usedForTraining: true } }
+      );
+    }
+
+    return res.json({
+      ok: true,
+      totalRecords: dataset.length,
+      classes,
+      dataset,
+    });
+  } catch (err) {
+    console.error('Dataset export error:', err);
+    return res.status(500).json({ error: 'Failed to export dataset' });
+  }
+});
 
 app.post('/api/chat', async (req, res) => {
   const { message, language, context } = req.body || {};
@@ -288,12 +345,97 @@ app.get('/api/analyses', async (req, res) => {
     }
     const limit = Math.min(parseInt(req.query.limit || '50', 10), 200);
     const skip = Math.max(parseInt(req.query.skip || '0', 10), 0);
-    const cursor = analysesColl.find({}).sort({ timestamp: -1 }).skip(skip).limit(limit);
-    const items = await cursor.toArray();
-    return res.json({ ok: true, items });
+    const filter = {};
+
+    if (req.query.disease) {
+      filter.disease = { $regex: req.query.disease, $options: 'i' };
+    }
+
+    if (req.query.isHealthy !== undefined) {
+      filter.isHealthy = req.query.isHealthy === 'true';
+    }
+
+    if (req.query.isVerified !== undefined) {
+      filter.isVerified = req.query.isVerified === 'true';
+    }
+
+    if (req.query.includeDemo !== 'true') {
+      filter.isDemo = { $ne: true };
+    }
+
+    const [items, total, totalVerified, totalWithImage, diseaseCounts] = await Promise.all([
+      analysesColl
+        .find(filter, { projection: { imageBase64: 0 } })
+        .sort({ timestamp: -1 })
+        .skip(skip)
+        .limit(limit)
+        .toArray(),
+      analysesColl.countDocuments(filter),
+      analysesColl.countDocuments({ isVerified: true, isDemo: { $ne: true } }),
+      analysesColl.countDocuments({ imageBase64: { $ne: null }, isDemo: { $ne: true } }),
+      analysesColl.aggregate([
+        { $match: { disease: { $ne: null }, isDemo: { $ne: true } } },
+        { $group: { _id: '$disease', count: { $sum: 1 }, verified: { $sum: { $cond: ['$isVerified', 1, 0] } } } },
+        { $sort: { count: -1 } },
+        { $limit: 20 },
+      ]).toArray(),
+    ]);
+
+    return res.json({
+      ok: true,
+      items,
+      total,
+      mlStats: {
+        totalScans: total,
+        totalVerified,
+        totalWithImage,
+        diseaseCounts,
+      },
+    });
   } catch (err) {
     console.error('Fetch analyses error:', err);
     return res.status(500).json({ error: 'Failed to fetch analyses' });
+  }
+});
+
+app.patch('/api/analysis/:id', async (req, res) => {
+  try {
+    if (!dbReady || !analysesColl) {
+      return res.status(503).json({ error: 'Database not ready. Please try again in a moment.' });
+    }
+
+    const id = new ObjectId(req.params.id);
+    const body = req.body || {};
+    const update = {};
+
+    if (body.verifiedLabel !== undefined) {
+      update.verifiedLabel = body.verifiedLabel;
+      update.isVerified = true;
+    }
+
+    if (body.isVerified === false) {
+      update.isVerified = false;
+      update.verifiedLabel = null;
+    }
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'No valid update fields provided' });
+    }
+
+    const result = await analysesColl.findOneAndUpdate(
+      { _id: id },
+      { $set: update },
+      { returnDocument: 'after', projection: { imageBase64: 0 } }
+    );
+
+    if (!result) {
+      return res.status(404).json({ error: 'Analysis not found' });
+    }
+
+    return res.json({ ok: true, item: result });
+  } catch (err) {
+    console.error('Update analysis error:', err);
+    return res.status(500).json({ error: 'Failed to update analysis' });
   }
 });
 
