@@ -44,8 +44,6 @@ const MONGODB_URI = process.env.MONGODB_URI;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const PORT = process.env.PORT || 5050;
 const JWT_SECRET = process.env.JWT_SECRET || 'cropsense_jwt_secret_change_in_production';
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
-
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://crop-sense-ai-app.vercel.app',
   'http://localhost:3000',
@@ -147,7 +145,6 @@ async function initDb() {
     analysesColl = db.collection('analyses');
     usersColl = db.collection('users');
 
-    await usersColl.createIndex({ googleId: 1 }, { unique: true, sparse: true });
     await usersColl.createIndex({ email: 1 }, { unique: true });
 
     dbReady = true;
@@ -203,13 +200,12 @@ function verifyPassword(password, storedHash) {
 
 function sanitizeUser(user) {
   return {
-    id: user._id?.toString?.() || user.googleId || user.id || '',
-    googleId: user.googleId || null,
+    id: user._id?.toString?.() || user.id || '',
     email: user.email || '',
     name: user.name || '',
     picture: user.picture || null,
     role: user.role || 'user',
-    provider: user.provider || (user.googleId ? 'google' : 'local'),
+    provider: user.provider || 'local',
     scanCount: user.scanCount || 0,
     createdAt: user.createdAt || null,
   };
@@ -218,8 +214,7 @@ function sanitizeUser(user) {
 function signAuthToken(user) {
   return jwt.sign(
     {
-      userId: user._id?.toString?.() || user.googleId || '',
-      googleId: user.googleId || null,
+      userId: user._id?.toString?.() || '',
       email: user.email,
       name: user.name,
       picture: user.picture || null,
@@ -326,101 +321,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-app.post('/api/auth/google', async (req, res) => {
-  const { credential } = req.body || {};
-
-  if (!credential) {
-    return res.status(400).json({ error: 'Google credential is required' });
-  }
-
-  try {
-    const verifyRes = await fetch(
-      `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
-    );
-    const googleData = await verifyRes.json();
-
-    if (!verifyRes.ok || googleData.error) {
-      console.error('Google token verification failed:', googleData);
-      return res.status(401).json({ error: 'Invalid Google token' });
-    }
-
-    if (GOOGLE_CLIENT_ID && googleData.aud !== GOOGLE_CLIENT_ID) {
-      return res.status(401).json({ error: 'Token audience mismatch' });
-    }
-
-    const googleId = googleData.sub;
-    const email = normalizeEmail(googleData.email);
-    const name = googleData.name || email.split('@')[0];
-    const picture = googleData.picture || null;
-
-    if (!googleId || !email) {
-      return res.status(400).json({ error: 'No email in Google token' });
-    }
-
-    let user = {
-      _id: googleId,
-      googleId,
-      email,
-      name,
-      picture,
-      role: 'user',
-      provider: 'google',
-      scanCount: 0,
-    };
-
-    if (dbReady && usersColl) {
-      const existingUser = await usersColl.findOne({
-        $or: [{ googleId }, { email }],
-      });
-
-      if (existingUser) {
-        const update = {
-          googleId,
-          email,
-          name: name || existingUser.name,
-          picture: picture || existingUser.picture || null,
-          role: existingUser.role || 'user',
-          provider: 'google',
-          updatedAt: new Date(),
-          lastLoginAt: new Date(),
-        };
-
-        await usersColl.updateOne(
-          { _id: existingUser._id },
-          { $set: update }
-        );
-
-        user = { ...existingUser, ...update };
-      } else {
-        const doc = {
-          googleId,
-          email,
-          name,
-          picture,
-          role: 'user',
-          provider: 'google',
-          scanCount: 0,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          lastLoginAt: new Date(),
-        };
-
-        const result = await usersColl.insertOne(doc);
-        user = { ...doc, _id: result.insertedId };
-      }
-    }
-
-    return res.json({
-      ok: true,
-      token: signAuthToken(user),
-      user: sanitizeUser(user),
-    });
-  } catch (err) {
-    console.error('Auth error:', err.message);
-    return res.status(500).json({ error: 'Authentication failed. Please try again.' });
-  }
-});
-
 app.get('/api/auth/me', requireAuth, async (req, res) => {
   try {
     let user = req.user;
@@ -432,17 +332,12 @@ app.get('/api/auth/me', requireAuth, async (req, res) => {
         filters.push({ _id: new ObjectId(req.user.userId) });
       }
 
-      if (req.user.googleId) {
-        filters.push({ googleId: req.user.googleId });
-      }
-
       if (filters.length > 0) {
         const dbUser = await usersColl.findOne(
           filters.length === 1 ? filters[0] : { $or: filters },
           {
             projection: {
               _id: 1,
-              googleId: 1,
               email: 1,
               name: 1,
               picture: 1,
@@ -476,7 +371,7 @@ app.get('/api/health', (req, res) =>
     ok: true,
     hasGeminiKey: Boolean(getGeminiApiKey()),
     dbReady,
-    authEnabled: Boolean(GOOGLE_CLIENT_ID),
+    authEnabled: true,
   })
 );
 
