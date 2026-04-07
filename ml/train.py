@@ -46,13 +46,16 @@ except ImportError:
 
 API_BASE = os.getenv("API_BASE", "http://localhost:3000")
 DEFAULT_MONGO_URI = os.getenv("MONGODB_URI")
-MODEL_DIR = Path(__file__).parent / "models"
+
+# By default models and indexes are saved under server/ml_model/models
+ML_MODEL_DIR = Path(__file__).parent.parent / "ml_model" / "models"
+MODEL_DIR = ML_MODEL_DIR
 MODEL_PATH = MODEL_DIR / "cropsense_model.pth"
 INDEX_PATH = MODEL_DIR / "class_index.json"
 IMG_SIZE = 224
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-MODEL_DIR.mkdir(exist_ok=True)
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
 ensure_log_file()
 print(f"Device: {DEVICE}")
 print(f"API:    {API_BASE}")
@@ -181,6 +184,36 @@ def fetch_records_from_file(dataset_file):
     raise RuntimeError("Dataset file must contain a list or an object with a dataset field.")
 
 
+def fetch_records_from_folder(dataset_dir, min_confidence=0.0):
+    dataset_path = Path(dataset_dir)
+    if not dataset_path.is_absolute():
+        dataset_path = Path.cwd() / dataset_path
+    if not dataset_path.exists():
+        raise RuntimeError(f"Dataset folder not found: {dataset_path}")
+
+    records = []
+    # Expect subfolders per class name
+    for class_dir in sorted([p for p in dataset_path.iterdir() if p.is_dir()]):
+        label = class_dir.name
+        for img_path in class_dir.glob('*'):
+            if not img_path.is_file():
+                continue
+            try:
+                with open(img_path, 'rb') as fh:
+                    b64 = base64.b64encode(fh.read()).decode('utf-8')
+                records.append({
+                    'id': str(img_path),
+                    'label': label,
+                    'confidence': 1.0,
+                    'severityScore': 0,
+                    'imageBase64': b64,
+                    'createdAt': None,
+                })
+            except Exception:
+                continue
+    return records
+
+
 def load_records(args):
     errors = []
     if args.data_source == "auto":
@@ -196,6 +229,9 @@ def load_records(args):
             elif source == "mongo":
                 print("\n[1/5] Fetching dataset directly from MongoDB ...")
                 records = fetch_records_from_mongo(args.mongo_uri or DEFAULT_MONGO_URI, args.min_confidence)
+            elif source == 'folder':
+                print(f"\n[1/5] Loading dataset from folder: {args.dataset_dir} ...")
+                records = fetch_records_from_folder(args.dataset_dir, args.min_confidence)
             else:
                 print("\n[1/5] Loading dataset from local JSON file ...")
                 records = fetch_records_from_file(args.dataset_file)
@@ -426,6 +462,17 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--mongo-uri", type=str)
     parser.add_argument("--dataset-file", type=str)
-    parser.add_argument("--data-source", choices=["auto", "api", "mongo", "file"], default="auto")
+    parser.add_argument("--dataset-dir", type=str, default=str(Path(__file__).parent.parent / "ml_model" / "dataset"))
+    parser.add_argument("--data-source", choices=["auto", "api", "mongo", "file", "folder"], default="auto")
+    parser.add_argument("--output-dir", type=str, default=str(ML_MODEL_DIR))
     parser.add_argument("--no-pretrained", action="store_true")
-    main(parser.parse_args())
+    args = parser.parse_args()
+
+        # if output-dir provided, override MODEL_PATHs
+    if args.output_dir:
+        MODEL_DIR = Path(args.output_dir)
+        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        MODEL_PATH = MODEL_DIR / "cropsense_model.pth"
+        INDEX_PATH = MODEL_DIR / "class_index.json"
+
+        main(args)

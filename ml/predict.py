@@ -22,7 +22,11 @@ from PIL import Image
 
 from activity_log import append_log, ensure_log_file
 
-MODEL_DIR  = Path(__file__).parent / 'models'
+# Prefer models stored under ../ml_model/models (project-level ML artifacts).
+# Fallback to the original ml/models directory if not present.
+ALT_MODEL_DIR = Path(__file__).parent.parent / 'ml_model' / 'models'
+DEFAULT_MODEL_DIR = Path(__file__).parent / 'models'
+MODEL_DIR = ALT_MODEL_DIR if ALT_MODEL_DIR.exists() else DEFAULT_MODEL_DIR
 MODEL_PATH = MODEL_DIR / 'cropsense_model.pth'
 DEVICE     = torch.device('cpu')   # CPU for production inference
 

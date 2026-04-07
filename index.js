@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { MongoClient, ObjectId } = require('mongodb');
+const { execFile } = require('child_process');
 
 const ENV_PATHS = [
   path.resolve(__dirname, '../.env.local'),
@@ -674,6 +675,48 @@ app.post('/api/chat', async (req, res) => {
     }
 
     return res.status(500).json({ error: 'Failed to contact Gemini.' });
+  }
+});
+
+// Local ML prediction endpoint — runs the Python predictor with the uploaded base64 image.
+app.post('/api/local_predict', async (req, res) => {
+  try {
+    const imageBase64 = req.body?.imageBase64 || req.body?.image || '';
+
+    if (!imageBase64 || typeof imageBase64 !== 'string' || imageBase64.trim() === '') {
+      return res.status(400).json({ success: false, error: 'imageBase64 is required' });
+    }
+
+    // Safety: limit size (example: ~10MB base64) to avoid abuse
+    if (imageBase64.length > 10 * 1024 * 1024) {
+      return res.status(400).json({ success: false, error: 'Image too large' });
+    }
+
+    const python = process.env.PYTHON_PATH || 'python';
+    const script = path.resolve(__dirname, 'ml', 'predict.py');
+
+    execFile(
+      python,
+      [script, '--image', imageBase64],
+      { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
+      (err, stdout, stderr) => {
+        if (err) {
+          console.error('Local predict error:', err, stderr?.toString?.());
+          return res.status(500).json({ success: false, error: 'Local prediction failed' });
+        }
+
+        try {
+          const data = JSON.parse(stdout || '{}');
+          return res.json(data);
+        } catch (e) {
+          console.error('Local predict parse error:', e, 'stdout:', stdout);
+          return res.status(500).json({ success: false, error: 'Invalid predictor output' });
+        }
+      }
+    );
+  } catch (err) {
+    console.error('Local predict endpoint error:', err.message);
+    return res.status(500).json({ success: false, error: 'Local prediction endpoint error' });
   }
 });
 

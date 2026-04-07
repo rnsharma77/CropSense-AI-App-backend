@@ -22,3 +22,14 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .env
+
+# Machine learning artifacts
+# Ignore dataset and trained model files to avoid large uploads
+/ml_model/dataset/
+/ml_model/models/
+/ml_model/*.pt
+/ml_model/*.pth
+/ml_model/*.h5
+/ml_model/*.ckpt
+/ml_model/manifest.csv
+/ml_model/dataset_check_output.txt
