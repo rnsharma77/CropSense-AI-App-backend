@@ -88,7 +88,20 @@ function getLocalMlDiagnostics() {
 }
 
 function getPythonCandidates() {
-  return [...new Set([process.env.PYTHON_PATH, 'python', 'python3', 'py'].filter(Boolean))];
+  return [
+    ...new Set(
+      [
+        process.env.PYTHON_PATH,
+        'python3',
+        'python',
+        '/opt/render/project/python/bin/python3',
+        '/opt/render/project/python/bin/python',
+        '/usr/local/bin/python3',
+        '/usr/bin/python3',
+        'py',
+      ].filter(Boolean)
+    ),
+  ];
 }
 
 function sanitizeImageBase64(imageValue) {
