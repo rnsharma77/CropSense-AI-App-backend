@@ -102,11 +102,18 @@ function sanitizeImageBase64(imageValue) {
 function runLocalPythonPredict(imageBase64) {
   const script = path.resolve(__dirname, 'ml', 'predict.py');
   const pythonCandidates = getPythonCandidates();
+  const tempDir = path.resolve(__dirname, '.tmp-predict');
+
+  fs.mkdirSync(tempDir, { recursive: true });
 
   return new Promise((resolve) => {
+    const tempFile = path.join(tempDir, `predict-${Date.now()}-${crypto.randomUUID()}.bin`);
+    fs.writeFileSync(tempFile, Buffer.from(imageBase64, 'base64'));
+
     const tryNext = (index, lastError = null) => {
       if (index >= pythonCandidates.length) {
         const detail = lastError?.message || 'No working Python executable found';
+        fs.rmSync(tempFile, { force: true });
         return resolve({
           success: false,
           error: `Local prediction failed: ${detail}`,
@@ -116,7 +123,7 @@ function runLocalPythonPredict(imageBase64) {
       const python = pythonCandidates[index];
       execFile(
         python,
-        [script, '--image', imageBase64],
+        [script, '--file', tempFile],
         { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
         (err, stdout, stderr) => {
           if (err) {
@@ -128,6 +135,7 @@ function runLocalPythonPredict(imageBase64) {
           try {
             const data = JSON.parse(stdout || '{}');
             data.pythonExecutable = python;
+            fs.rmSync(tempFile, { force: true });
             return resolve(data);
           } catch (parseError) {
             console.error(`Local predict parse error via ${python}:`, parseError, 'stdout:', stdout);
