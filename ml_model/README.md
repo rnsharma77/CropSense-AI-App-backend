@@ -28,10 +28,12 @@ From the project root run (recommended inside a Python virtualenv):
 ```bash
 cd my-app/server
 pip install -r ml/requirements.txt
-python ml/train.py --data-source folder --dataset-dir ../ml_model/dataset --output-dir ../ml_model/models --epochs 20 --batch-size 16
+python ml/train.py --data-source folder --dataset-dir ml_model/dataset --output-dir ml_model/models --epochs 20 --batch-size 16
 ```
 
 This will save `cropsense_model.pth` and `class_index.json` under `server/ml_model/models`.
+
+If your dataset uses a split layout like `ml_model/dataset/train/<class_name>/...`, the training script will automatically use the `train` folder for training.
 
 Prediction (server)
 -------------------

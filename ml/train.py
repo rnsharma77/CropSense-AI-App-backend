@@ -25,7 +25,10 @@ import time
 from collections import Counter
 from pathlib import Path
 
-import requests
+try:
+    import requests
+except ImportError:
+    requests = None
 from PIL import Image
 
 import torch
@@ -101,6 +104,11 @@ val_tf = transforms.Compose(
 
 
 def fetch_records_from_api(min_confidence):
+    if requests is None:
+        raise RuntimeError(
+            "requests is not installed. Run: pip install -r ml/requirements.txt "
+            "or use --data-source folder/file/mongo."
+        )
     response = requests.get(
         f"{API_BASE}/api/dataset",
         params={
@@ -191,9 +199,19 @@ def fetch_records_from_folder(dataset_dir, min_confidence=0.0):
     if not dataset_path.exists():
         raise RuntimeError(f"Dataset folder not found: {dataset_path}")
 
+    # Support common dataset layouts like dataset/train/<class_name>/image.jpg
+    split_dirs = ["train", "training"]
+    class_root = dataset_path
+    for split_name in split_dirs:
+        split_path = dataset_path / split_name
+        if split_path.exists() and split_path.is_dir():
+            class_root = split_path
+            print(f"  Detected split dataset layout. Using classes from: {class_root}")
+            break
+
     records = []
     # Expect subfolders per class name
-    for class_dir in sorted([p for p in dataset_path.iterdir() if p.is_dir()]):
+    for class_dir in sorted([p for p in class_root.iterdir() if p.is_dir()]):
         label = class_dir.name
         for img_path in class_dir.glob('*'):
             if not img_path.is_file():
