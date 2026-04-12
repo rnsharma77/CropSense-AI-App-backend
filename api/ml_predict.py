@@ -9,6 +9,7 @@ import json
 import base64
 import sys
 import io
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 torch = None
@@ -131,23 +132,17 @@ def sanitize_base64(value):
     return str(value or '').strip().split(',', 1)[-1]
 
 
-def handler(request):
+def handle_request(request_body):
     """
-    Vercel serverless handler function.
+    Core request handler.
     Request format: POST with JSON body containing 'imageBase64'
     """
-    if request.method != 'POST':
-        return {
-            'statusCode': 405,
-            'body': json.dumps({'success': False, 'error': 'Method not allowed'})
-        }
-    
     try:
         # Parse request body
         try:
-            body = json.loads(request.body) if isinstance(request.body, str) else request.body
+            body = json.loads(request_body) if isinstance(request_body, str) else request_body
         except:
-            body = request.body if isinstance(request.body, dict) else {}
+            body = request_body if isinstance(request_body, dict) else {}
         
         image_base64 = body.get('imageBase64', '')
         if not image_base64:
@@ -193,6 +188,29 @@ def handler(request):
         }
 
 
+class handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        request_body = self.rfile.read(content_length).decode('utf-8')
+        response = handle_request(request_body)
+
+        self.send_response(response.get('statusCode', 200))
+        for key, value in response.get('headers', {}).items():
+            self.send_header(key, value)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(response.get('body', '{}').encode('utf-8'))
+
+    def do_GET(self):
+        self.send_response(405)
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps({'success': False, 'error': 'Method not allowed'}).encode('utf-8'))
+
+    def log_message(self, format, *args):
+        pass
+
+
 # For local testing
 if __name__ == '__main__':
     # Simple HTTP server for local testing
@@ -211,8 +229,8 @@ if __name__ == '__main__':
             req.method = 'POST'
             req.body = body.decode('utf-8')
             
-            response = handler(req)
-            
+            response = handle_request(req.body)
+
             self.send_response(response['statusCode'])
             for key, value in response.get('headers', {}).items():
                 self.send_header(key, value)
