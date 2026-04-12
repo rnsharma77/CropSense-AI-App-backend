@@ -4,10 +4,18 @@
   {
    "src": "index.js",
    "use": "@vercel/node",
-   "config": { "includeFiles": ["dist/**"] }
+   "config": { "includeFiles": ["dist/**", "ml_model/models/**", "ml/models/**"] }
+  },
+  {
+   "src": "api/ml_predict.py",
+   "use": "@vercel/python"
   }
  ],
  "routes": [
+  {
+   "src": "/api/ml_predict",
+   "dest": "api/ml_predict.py"
+  },
   {
    "src": "/(.*)",
    "dest": "index.js"

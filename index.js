@@ -735,12 +735,38 @@ app.post('/api/analyze_image', async (req, res) => {
     const thresholdEnv = process.env.LOCAL_CONFIDENCE_THRESHOLD || '0.8';
     const threshold = Math.min(Math.max(parseFloat(thresholdEnv) || 0.8, 0), 1);
 
-    const python = process.env.PYTHON_PATH || 'python';
-    const script = path.resolve(__dirname, 'ml', 'predict.py');
+    // Detect if running on Vercel (serverless) or locally
+    const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
+    const mlPredictUrl = process.env.ML_PREDICT_URL || (isVercel ? '/api/ml_predict' : null);
 
-    // Run the local predictor
-    const runLocalPredict = () =>
-      new Promise((resolve) => {
+    // Run the local predictor (local dev) or call serverless endpoint (Vercel)
+    const runLocalPredict = async () => {
+      // On Vercel: call the Python serverless endpoint
+      if (isVercel && mlPredictUrl) {
+        try {
+          const mlResponse = await fetch(`${mlPredictUrl}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ imageBase64 }),
+          });
+          if (mlResponse.ok) {
+            return await mlResponse.json();
+          } else {
+            const text = await mlResponse.text();
+            console.error('ML endpoint error:', mlResponse.status, text);
+            return { success: false, error: 'ML prediction service unavailable' };
+          }
+        } catch (err) {
+          console.error('ML endpoint request failed:', err.message);
+          return { success: false, error: 'ML prediction service unavailable' };
+        }
+      }
+
+      // Local development: use execFile to run predict.py
+      return new Promise((resolve) => {
+        const python = process.env.PYTHON_PATH || 'python';
+        const script = path.resolve(__dirname, 'ml', 'predict.py');
+        
         execFile(
           python,
           [script, '--image', imageBase64],
@@ -761,6 +787,7 @@ app.post('/api/analyze_image', async (req, res) => {
           }
         );
       });
+    };
 
     const localResult = await runLocalPredict();
 
