@@ -1,5 +1,6 @@
 const path = require('path');
 const crypto = require('crypto');
+const fs = require('fs');
 const dotenv = require('dotenv');
 const express = require('express');
 const cors = require('cors');
@@ -64,6 +65,27 @@ const GEMINI_FALLBACK_MODELS = [
 ];
 
 const app = express();
+
+function getLocalMlDiagnostics() {
+  const altModelDir = path.resolve(__dirname, 'ml_model', 'models');
+  const defaultModelDir = path.resolve(__dirname, 'ml', 'models');
+  const activeModelDir = fs.existsSync(altModelDir) ? altModelDir : defaultModelDir;
+  const modelPath = path.join(activeModelDir, 'cropsense_model.pth');
+  const classIndexPath = path.join(activeModelDir, 'class_index.json');
+  const predictScriptPath = path.resolve(__dirname, 'ml', 'predict.py');
+
+  return {
+    pythonPath: process.env.PYTHON_PATH || 'python',
+    isVercel: Boolean(process.env.VERCEL === '1' || process.env.VERCEL_ENV),
+    activeModelDir,
+    modelPath,
+    modelExists: fs.existsSync(modelPath),
+    classIndexPath,
+    classIndexExists: fs.existsSync(classIndexPath),
+    predictScriptPath,
+    predictScriptExists: fs.existsSync(predictScriptPath),
+  };
+}
 
 function isAllowedOrigin(origin) {
   if (!origin) {
@@ -373,6 +395,14 @@ app.get('/api/health', (req, res) =>
     hasGeminiKey: Boolean(getGeminiApiKey()),
     dbReady,
     authEnabled: true,
+    ml: getLocalMlDiagnostics(),
+  })
+);
+
+app.get('/api/local_predict_health', (req, res) =>
+  res.json({
+    ok: true,
+    ml: getLocalMlDiagnostics(),
   })
 );
 
@@ -737,7 +767,10 @@ app.post('/api/analyze_image', async (req, res) => {
 
     // Detect if running on Vercel (serverless) or locally
     const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
-    const mlPredictUrl = process.env.ML_PREDICT_URL || (isVercel ? '/api/ml_predict' : null);
+    const requestOrigin = `${req.protocol}://${req.get('host')}`;
+    const mlPredictUrl =
+      process.env.ML_PREDICT_URL ||
+      (isVercel ? new URL('/api/ml_predict', requestOrigin).toString() : null);
 
     // Run the local predictor (local dev) or call serverless endpoint (Vercel)
     const runLocalPredict = async () => {

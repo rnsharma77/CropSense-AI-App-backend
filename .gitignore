@@ -24,12 +24,16 @@ yarn-error.log*
 .env
 
 # Machine learning artifacts
-# Ignore dataset and trained model files to avoid large uploads
+# Ignore training dataset and intermediate ML artifacts.
+# Keep the trained production model files versioned so Render can run inference.
 /ml_model/dataset/
-/ml_model/models/
 /ml_model/*.pt
 /ml_model/*.pth
 /ml_model/*.h5
 /ml_model/*.ckpt
 /ml_model/manifest.csv
 /ml_model/dataset_check_output.txt
+/ml_model/models/*
+!/ml_model/models/
+!/ml_model/models/cropsense_model.pth
+!/ml_model/models/class_index.json
