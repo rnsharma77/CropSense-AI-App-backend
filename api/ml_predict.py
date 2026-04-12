@@ -11,6 +11,12 @@ import sys
 import io
 from pathlib import Path
 
+torch = None
+nn = None
+transforms = None
+models = None
+Image = None
+
 try:
     import torch
     import torch.nn as nn
@@ -25,7 +31,7 @@ ALT_MODEL_DIR = Path(__file__).parent.parent / 'ml_model' / 'models'
 DEFAULT_MODEL_DIR = Path(__file__).parent.parent / 'ml' / 'models'
 MODEL_DIR = ALT_MODEL_DIR if ALT_MODEL_DIR.exists() else DEFAULT_MODEL_DIR
 MODEL_PATH = MODEL_DIR / 'cropsense_model.pth'
-DEVICE = torch.device('cpu')
+DEVICE = torch.device('cpu') if torch is not None else None
 
 # Global model cache (persists across invocations in Vercel)
 _model_cache = None
@@ -48,6 +54,9 @@ def resolve_idx_to_class(raw_idx_to_class):
 def load_model():
     """Load model from checkpoint (cached globally)"""
     global _model_cache, _checkpoint_cache
+
+    if torch is None or nn is None or models is None:
+        return None, None
     
     if _model_cache is not None:
         return _model_cache, _checkpoint_cache
@@ -118,6 +127,10 @@ def predict(model, ck, img_bytes):
         }
 
 
+def sanitize_base64(value):
+    return str(value or '').strip().split(',', 1)[-1]
+
+
 def handler(request):
     """
     Vercel serverless handler function.
@@ -145,7 +158,7 @@ def handler(request):
         
         # Decode base64 image
         try:
-            img_bytes = base64.b64decode(image_base64)
+            img_bytes = base64.b64decode(sanitize_base64(image_base64))
         except Exception as e:
             return {
                 'statusCode': 400,
@@ -159,7 +172,7 @@ def handler(request):
                 'statusCode': 500,
                 'body': json.dumps({
                     'success': False,
-                    'error': 'Model not loaded. Run: python3 server/ml/train.py'
+                    'error': 'Model not loaded. Check Python ML dependencies and trained model files.'
                 })
             }
         

@@ -37,3 +37,6 @@ yarn-error.log*
 !/ml_model/models/
 !/ml_model/models/cropsense_model.pth
 !/ml_model/models/class_index.json
+/api/__pycache__/
+/ml/__pycache__/
+/ml/leaf_activity_log.csv

@@ -33,6 +33,10 @@ DEVICE     = torch.device('cpu')   # CPU for production inference
 ensure_log_file()
 
 
+def sanitize_base64(value):
+    return str(value or '').strip().split(',', 1)[-1]
+
+
 def resolve_idx_to_class(raw_idx_to_class):
     if not raw_idx_to_class:
         return {}
@@ -106,7 +110,7 @@ def main():
         sys.exit(0)   # Exit 0 so Node.js falls back to Plant.id gracefully
 
     if args.image:
-        img_bytes = base64.b64decode(args.image)
+        img_bytes = base64.b64decode(sanitize_base64(args.image))
     elif args.file:
         img_bytes = open(args.file,'rb').read()
     else:

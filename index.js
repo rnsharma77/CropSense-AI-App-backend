@@ -75,7 +75,7 @@ function getLocalMlDiagnostics() {
   const predictScriptPath = path.resolve(__dirname, 'ml', 'predict.py');
 
   return {
-    pythonPath: process.env.PYTHON_PATH || 'python',
+    pythonCandidates: getPythonCandidates(),
     isVercel: Boolean(process.env.VERCEL === '1' || process.env.VERCEL_ENV),
     activeModelDir,
     modelPath,
@@ -85,6 +85,60 @@ function getLocalMlDiagnostics() {
     predictScriptPath,
     predictScriptExists: fs.existsSync(predictScriptPath),
   };
+}
+
+function getPythonCandidates() {
+  return [...new Set([process.env.PYTHON_PATH, 'python', 'python3', 'py'].filter(Boolean))];
+}
+
+function sanitizeImageBase64(imageValue) {
+  if (typeof imageValue !== 'string') {
+    return '';
+  }
+
+  return imageValue.replace(/^data:\w+\/[-+.\w]+;base64,/, '').trim();
+}
+
+function runLocalPythonPredict(imageBase64) {
+  const script = path.resolve(__dirname, 'ml', 'predict.py');
+  const pythonCandidates = getPythonCandidates();
+
+  return new Promise((resolve) => {
+    const tryNext = (index, lastError = null) => {
+      if (index >= pythonCandidates.length) {
+        const detail = lastError?.message || 'No working Python executable found';
+        return resolve({
+          success: false,
+          error: `Local prediction failed: ${detail}`,
+        });
+      }
+
+      const python = pythonCandidates[index];
+      execFile(
+        python,
+        [script, '--image', imageBase64],
+        { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
+        (err, stdout, stderr) => {
+          if (err) {
+            const stderrText = stderr?.toString?.().trim();
+            console.error(`Local predict error via ${python}:`, err.message, stderrText);
+            return tryNext(index + 1, stderrText ? new Error(stderrText) : err);
+          }
+
+          try {
+            const data = JSON.parse(stdout || '{}');
+            data.pythonExecutable = python;
+            return resolve(data);
+          } catch (parseError) {
+            console.error(`Local predict parse error via ${python}:`, parseError, 'stdout:', stdout);
+            return tryNext(index + 1, parseError);
+          }
+        }
+      );
+    };
+
+    return tryNext(0);
+  });
 }
 
 function isAllowedOrigin(origin) {
@@ -711,7 +765,7 @@ app.post('/api/chat', async (req, res) => {
 // Local ML prediction endpoint — runs the Python predictor with the uploaded base64 image.
 app.post('/api/local_predict', async (req, res) => {
   try {
-    const imageBase64 = req.body?.imageBase64 || req.body?.image || '';
+    const imageBase64 = sanitizeImageBase64(req.body?.imageBase64 || req.body?.image || '');
 
     if (!imageBase64 || typeof imageBase64 !== 'string' || imageBase64.trim() === '') {
       return res.status(400).json({ success: false, error: 'imageBase64 is required' });
@@ -722,28 +776,11 @@ app.post('/api/local_predict', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Image too large' });
     }
 
-    const python = process.env.PYTHON_PATH || 'python';
-    const script = path.resolve(__dirname, 'ml', 'predict.py');
-
-    execFile(
-      python,
-      [script, '--image', imageBase64],
-      { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
-      (err, stdout, stderr) => {
-        if (err) {
-          console.error('Local predict error:', err, stderr?.toString?.());
-          return res.status(500).json({ success: false, error: 'Local prediction failed' });
-        }
-
-        try {
-          const data = JSON.parse(stdout || '{}');
-          return res.json(data);
-        } catch (e) {
-          console.error('Local predict parse error:', e, 'stdout:', stdout);
-          return res.status(500).json({ success: false, error: 'Invalid predictor output' });
-        }
-      }
-    );
+    const data = await runLocalPythonPredict(imageBase64);
+    if (!data?.success) {
+      return res.status(500).json(data);
+    }
+    return res.json(data);
   } catch (err) {
     console.error('Local predict endpoint error:', err.message);
     return res.status(500).json({ success: false, error: 'Local prediction endpoint error' });
@@ -753,7 +790,7 @@ app.post('/api/local_predict', async (req, res) => {
 // Combined analysis endpoint: try local model first, then fallback to Plant.id API
 app.post('/api/analyze_image', async (req, res) => {
   try {
-    const imageBase64 = req.body?.imageBase64 || req.body?.image || '';
+    const imageBase64 = sanitizeImageBase64(req.body?.imageBase64 || req.body?.image || '');
     if (!imageBase64 || typeof imageBase64 !== 'string' || imageBase64.trim() === '') {
       return res.status(400).json({ success: false, error: 'imageBase64 is required' });
     }
@@ -796,30 +833,7 @@ app.post('/api/analyze_image', async (req, res) => {
       }
 
       // Local development: use execFile to run predict.py
-      return new Promise((resolve) => {
-        const python = process.env.PYTHON_PATH || 'python';
-        const script = path.resolve(__dirname, 'ml', 'predict.py');
-        
-        execFile(
-          python,
-          [script, '--image', imageBase64],
-          { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
-          (err, stdout, stderr) => {
-            if (err) {
-              console.error('Local predict error (analyze_image):', err, stderr?.toString?.());
-              return resolve({ success: false, error: 'Local prediction failed' });
-            }
-
-            try {
-              const data = JSON.parse(stdout || '{}');
-              return resolve(data);
-            } catch (e) {
-              console.error('Local predict parse error (analyze_image):', e, 'stdout:', stdout);
-              return resolve({ success: false, error: 'Invalid predictor output' });
-            }
-          }
-        );
-      });
+      return runLocalPythonPredict(imageBase64);
     };
 
     const localResult = await runLocalPredict();
