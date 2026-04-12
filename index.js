@@ -720,5 +720,119 @@ app.post('/api/local_predict', async (req, res) => {
   }
 });
 
+// Combined analysis endpoint: try local model first, then fallback to Plant.id API
+app.post('/api/analyze_image', async (req, res) => {
+  try {
+    const imageBase64 = req.body?.imageBase64 || req.body?.image || '';
+    if (!imageBase64 || typeof imageBase64 !== 'string' || imageBase64.trim() === '') {
+      return res.status(400).json({ success: false, error: 'imageBase64 is required' });
+    }
+
+    if (imageBase64.length > 10 * 1024 * 1024) {
+      return res.status(400).json({ success: false, error: 'Image too large' });
+    }
+
+    const thresholdEnv = process.env.LOCAL_CONFIDENCE_THRESHOLD || '0.8';
+    const threshold = Math.min(Math.max(parseFloat(thresholdEnv) || 0.8, 0), 1);
+
+    const python = process.env.PYTHON_PATH || 'python';
+    const script = path.resolve(__dirname, 'ml', 'predict.py');
+
+    // Run the local predictor
+    const runLocalPredict = () =>
+      new Promise((resolve) => {
+        execFile(
+          python,
+          [script, '--image', imageBase64],
+          { timeout: 30000, maxBuffer: 10 * 1024 * 1024 },
+          (err, stdout, stderr) => {
+            if (err) {
+              console.error('Local predict error (analyze_image):', err, stderr?.toString?.());
+              return resolve({ success: false, error: 'Local prediction failed' });
+            }
+
+            try {
+              const data = JSON.parse(stdout || '{}');
+              return resolve(data);
+            } catch (e) {
+              console.error('Local predict parse error (analyze_image):', e, 'stdout:', stdout);
+              return resolve({ success: false, error: 'Invalid predictor output' });
+            }
+          }
+        );
+      });
+
+    const localResult = await runLocalPredict();
+
+    // If local model returns a confident prediction above threshold, return it
+    if (
+      localResult &&
+      localResult.success === true &&
+      localResult.disease &&
+      typeof localResult.confidence === 'number' &&
+      localResult.confidence >= threshold
+    ) {
+      localResult.fallback = false;
+      localResult.thresholdUsed = threshold;
+      return res.json(localResult);
+    }
+
+    // Otherwise, attempt Plant.id fallback if API key is configured
+    const plantKey = process.env.PLANT_ID_API_KEY;
+    if (!plantKey) {
+      // If no Plant.id key, return local result (even if low confidence) with a note
+      const fallback = localResult || { success: false, error: 'No local prediction available' };
+      fallback.fallback = true;
+      fallback.note = 'No PLANT_ID_API_KEY configured for external analysis';
+      fallback.thresholdUsed = threshold;
+      return res.json(fallback);
+    }
+
+    // Prepare base64 without data URI prefix
+    const cleanBase64 = imageBase64.replace(/^data:\w+\/[-+.\w]+;base64,/, '');
+
+    const plantResp = await fetch('https://api.plant.id/v2/identify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: plantKey, images: [cleanBase64] }),
+    }).catch((err) => {
+      console.error('Plant.id request failed:', err?.message || err);
+      return null;
+    });
+
+    if (!plantResp || !plantResp.ok) {
+      const statusText = plantResp ? `${plantResp.status} ${plantResp.statusText}` : 'No response';
+      console.error('Plant.id API error:', statusText);
+      const fallback = localResult || { success: false, error: 'External analysis failed' };
+      fallback.fallback = true;
+      fallback.thresholdUsed = threshold;
+      fallback.plantIdError = statusText;
+      return res.json(fallback);
+    }
+
+    const plantData = await plantResp.json().catch(() => ({}));
+
+    // Extract top suggestion and probability if available
+    const top = (plantData.suggestions && plantData.suggestions[0]) || null;
+    const plantName = top?.plant_name || top?.name || null;
+    const plantProb = top?.probability || (top?.probability?.toFixed ? top.probability : undefined) || 0;
+
+    const out = {
+      success: true,
+      source: 'plant_id',
+      plantIdRaw: plantData,
+      disease: plantName || null,
+      confidence: typeof plantProb === 'number' ? plantProb : parseFloat(plantProb) || 0,
+      fallback: true,
+      thresholdUsed: threshold,
+    };
+
+    return res.json(out);
+  } catch (err) {
+    console.error('Analyze image route error:', err);
+    return res.status(500).json({ success: false, error: 'Analyze image failed' });
+  }
+});
+
 app.listen(PORT, () => console.log(`CropSense backend running on port ${PORT}`));
 initDb().catch((err) => console.error('initDb failed:', err));
