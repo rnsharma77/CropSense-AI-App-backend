@@ -32,7 +32,7 @@ except ImportError as e:
     print(json.dumps({
         'success': False,
         'error': error_msg,
-        'solution': 'Ensure requirements.txt includes torch. Install with: pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu',
+        'solution': 'Ensure requirements.txt includes torch. Install with: pip install -r requirements.txt',
         'traceback': str(e),
     }))
     sys.exit(1)

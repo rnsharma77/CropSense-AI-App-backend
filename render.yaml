@@ -5,10 +5,11 @@ services:
     region: oregon
     plan: free
     
-    # Build command: Install Python deps with CPU PyTorch index, then Node deps
+    # Build command: install Python deps, then Node deps.
+    # requirements.txt already declares the PyTorch CPU wheel source.
     buildCommand: |
       pip install --upgrade pip
-      pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu
+      pip install -r requirements.txt
       npm install
     
     # Start command
