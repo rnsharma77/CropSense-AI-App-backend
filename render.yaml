@@ -37,4 +37,4 @@ services:
     # - PLANT_ID_API_KEY: Your API key from Plant.id
     # - JWT_SECRET: A secure random string (min 32 chars)
     # - GOOGLE_CLIENT_SECRET: Your Google OAuth secret
-    # - CORS_ORIGINS: https://cropsense.vercel.app
+    # - CORS_ORIGINS: https://cropsenseaiapp.vercel.app

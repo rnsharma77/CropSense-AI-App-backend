@@ -84,7 +84,7 @@ const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const JWT_SECRET = process.env.JWT_SECRET || 'cropsense_jwt_secret_change_in_production';
 const DEFAULT_ALLOWED_ORIGINS = [
-  'https://crop-sense-ai-app.vercel.app',
+  'https://cropsenseaiapp.vercel.app',
   'http://localhost:3000',
   'http://127.0.0.1:3000',
 ];
