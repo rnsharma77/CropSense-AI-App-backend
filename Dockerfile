@@ -31,8 +31,9 @@ COPY --from=builder /app/node_modules ./node_modules
 
 # Install Python dependencies with CPU-only PyTorch
 # Using the PyTorch CPU index to avoid GPU wheels and reduce image size
-RUN python3 -m pip install --upgrade pip setuptools wheel && \
-    python3 -m pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu
+# Note: Alpine Linux requires --break-system-packages for pip installs (PEP 668)
+RUN python3 -m pip install --upgrade pip setuptools wheel --break-system-packages && \
+    python3 -m pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu --break-system-packages
 
 # Verify torch installation
 RUN python3 -c "import torch; print(f'✓ PyTorch {torch.__version__} installed successfully')" && \
