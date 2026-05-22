@@ -1,0 +1,43 @@
+# Node-specific patterns
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Environment files (keep safe for prod)
+.env
+.env.local
+.env.*.local
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts (frontend handles separately)
+dist/
+build/
+
+# Testing and logs
+.runlogs/
+coverage/
+*.log
+
+# Temporary files
+.tmp*/
+*.tmp
+
+# ML training artifacts
+ml_model/dataset/
+ml/activity_log.csv
+
+# Keep production-ready files
+!ml_model/models/cropsense_model.pth
+!ml_model/models/class_index.json

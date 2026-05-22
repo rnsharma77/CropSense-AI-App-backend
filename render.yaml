@@ -1,0 +1,39 @@
+services:
+  - type: web
+    name: cropsense-backend
+    env: python
+    region: oregon
+    plan: free
+    
+    # Build command: Install Python deps with CPU PyTorch index, then Node deps
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cpu
+      npm install
+    
+    # Start command
+    startCommand: npm start
+    
+    # Environment variables for Python
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.6"
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: NODE_ENV
+        value: production
+      - key: PYTORCH_ENABLE_MPS_FALLBACK
+        value: "1"
+      - key: PORT
+        value: "5050"
+    
+    # Health check endpoint
+    healthCheckPath: /api/health
+    
+    # Environment variables that MUST be set in Render dashboard:
+    # - MONGODB_URI: mongodb+srv://username:password@cluster.mongodb.net/cropsense
+    # - GEMINI_API_KEY: Your API key from Google AI Studio
+    # - PLANT_ID_API_KEY: Your API key from Plant.id
+    # - JWT_SECRET: A secure random string (min 32 chars)
+    # - GOOGLE_CLIENT_SECRET: Your Google OAuth secret
+    # - CORS_ORIGINS: https://cropsense.vercel.app

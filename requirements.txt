@@ -1,0 +1,24 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# CropSense API — Production Dependencies (Render-Optimized)
+# ============================================================
+
+# Core ML stack (CPU-only, optimized for Render)
+torch==2.0.1
+torchvision==0.15.2
+scikit-learn==1.3.2
+
+# Data and utilities
+numpy==1.24.3
+Pillow==10.0.0
+pandas==2.1.1
+tqdm==4.66.1
+matplotlib==3.7.2
+requests==2.31.0
+
+# Database
+pymongo==4.6.0
+
+# Backend
+Flask==3.0.0
+python-dotenv==1.0.0
