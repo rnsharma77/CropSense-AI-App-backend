@@ -312,6 +312,20 @@ function requireAuth(req, res, next) {
   }
 }
 
+function optionalAuth(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+  if (!token) return next();
+
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+  } catch {
+    // ignore invalid token for optional auth
+  }
+
+  return next();
+}
+
 let dbClient;
 let analysesColl;
 let usersColl;
@@ -827,6 +841,80 @@ app.post('/api/analysis', async (req, res) => {
   }
 });
 
+// Compatibility analyze endpoint that mirrors /api/analyze_image behavior and saves history
+app.post('/api/analyze', optionalAuth, async (req, res) => {
+  try {
+    const requestOrigin = `${req.protocol}://${req.get('host')}`;
+    const target = new URL('/api/analyze_image', requestOrigin).toString();
+    const resp = await fetch(target, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: req.headers.authorization || '' },
+      body: JSON.stringify({ imageBase64: req.body?.imageBase64 || req.body?.image || '' }),
+    });
+
+    const payload = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      return res.status(resp.status).json(payload || { error: 'Analyze failed' });
+    }
+
+    return res.json(payload);
+  } catch (err) {
+    console.error('Proxy analyze error:', err?.message || err);
+    return res.status(500).json({ error: 'Analyze proxy failed' });
+  }
+});
+
+// Get authenticated user's history
+app.get('/api/history', requireAuth, async (req, res) => {
+  try {
+    if (!ensureAnalysesReady(res)) return;
+
+    const userId = req.user?.userId;
+    if (!userId) return res.status(400).json({ error: 'Invalid user' });
+
+    const limit = Math.min(parseInt(req.query.limit || '20', 10), 200);
+    const skip = Math.max(parseInt(req.query.skip || '0', 10), 0);
+    const filter = { userId: ObjectId.isValid(userId) ? new ObjectId(userId) : userId };
+
+    if (req.query.disease) {
+      filter.disease = { $regex: String(req.query.disease), $options: 'i' };
+    }
+
+    const items = await analysesColl
+      .find(filter)
+      .sort({ timestamp: -1 })
+      .skip(skip)
+      .limit(limit)
+      .toArray();
+
+    // map _id to id string for frontend
+    const mapped = items.map((it) => ({ id: it._id.toString(), ...it }));
+    return res.json({ ok: true, items: mapped, total: await analysesColl.countDocuments(filter) });
+  } catch (err) {
+    console.error('Fetch history error:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+
+// Delete a history item owned by the authenticated user
+app.delete('/api/history/:id', requireAuth, async (req, res) => {
+  try {
+    if (!ensureAnalysesReady(res)) return;
+
+    const userId = req.user?.userId;
+    const id = req.params.id;
+    if (!userId) return res.status(400).json({ error: 'Invalid user' });
+    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    const result = await analysesColl.deleteOne({ _id: new ObjectId(id), userId: ObjectId.isValid(userId) ? new ObjectId(userId) : userId });
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Not found or not authorized' });
+    return res.json({ ok: true, deleted: true });
+  } catch (err) {
+    console.error('Delete history error:', err?.message || err);
+    return res.status(500).json({ error: 'Failed to delete history' });
+  }
+});
+
 app.get('/api/analyses', async (req, res) => {
   try {
     if (!ensureAnalysesReady(res)) {
@@ -1154,6 +1242,16 @@ app.post('/api/local_predict', async (req, res) => {
 // Combined analysis endpoint: try local model first, then fallback to Plant.id API
 app.post('/api/analyze_image', async (req, res) => {
   try {
+    // attempt to decode auth token if present (optional)
+    const header = req.headers.authorization || '';
+    const token = header.startsWith('Bearer ') ? header.slice(7).trim() : null;
+    if (token) {
+      try {
+        req.user = jwt.verify(token, JWT_SECRET);
+      } catch {
+        // ignore invalid token
+      }
+    }
     const imageBase64 = sanitizeImageBase64(req.body?.imageBase64 || req.body?.image || '');
     const imageSizeBytes = getDecodedImageSize(imageBase64);
     if (!imageBase64 || typeof imageBase64 !== 'string' || imageBase64.trim() === '') {
@@ -1217,7 +1315,27 @@ app.post('/api/analyze_image', async (req, res) => {
     ) {
       localResult.fallback = false;
       localResult.thresholdUsed = threshold;
-      return res.json(buildDiagnosisResponse(localResult, { source: 'local_ml', fallback: false, thresholdUsed: threshold }));
+      const finalResp = buildDiagnosisResponse(localResult, { source: 'local_ml', fallback: false, thresholdUsed: threshold });
+      try {
+        if (dbReady && analysesColl) {
+          const doc = {
+            userId: req.user?.userId ? (ObjectId.isValid(req.user.userId) ? new ObjectId(req.user.userId) : req.user.userId) : null,
+            timestamp: new Date(),
+            disease: finalResp.disease_name || null,
+            confidence: finalResp.confidenceValue ?? finalResp.confidence ?? null,
+            severity: finalResp.severity || null,
+            remedies: finalResp.treatment || null,
+            imageBase64: imageBase64 || null,
+            meta: { source: finalResp.source || null },
+          };
+
+          await analysesColl.insertOne(doc);
+        }
+      } catch (saveErr) {
+        console.warn('Failed to save analysis to DB:', saveErr?.message || saveErr);
+      }
+
+      return res.json(finalResp);
     }
 
     // Otherwise, attempt Plant.id fallback if API key is configured
@@ -1228,7 +1346,27 @@ app.post('/api/analyze_image', async (req, res) => {
       fallback.fallback = true;
       fallback.note = 'No PLANT_ID_API_KEY configured for external analysis';
       fallback.thresholdUsed = threshold;
-      return res.json(buildDiagnosisResponse(fallback, { source: fallback.source || 'local_ml', fallback: true, thresholdUsed: threshold }));
+      const finalResp = buildDiagnosisResponse(fallback, { source: fallback.source || 'local_ml', fallback: true, thresholdUsed: threshold });
+      try {
+        if (dbReady && analysesColl) {
+          const doc = {
+            userId: req.user?.userId ? (ObjectId.isValid(req.user.userId) ? new ObjectId(req.user.userId) : req.user.userId) : null,
+            timestamp: new Date(),
+            disease: finalResp.disease_name || null,
+            confidence: finalResp.confidenceValue ?? finalResp.confidence ?? null,
+            severity: finalResp.severity || null,
+            remedies: finalResp.treatment || null,
+            imageBase64: imageBase64 || null,
+            meta: { source: finalResp.source || null },
+          };
+
+          await analysesColl.insertOne(doc);
+        }
+      } catch (saveErr) {
+        console.warn('Failed to save analysis to DB:', saveErr?.message || saveErr);
+      }
+
+      return res.json(finalResp);
     }
 
     // Prepare base64 without data URI prefix
@@ -1270,7 +1408,29 @@ app.post('/api/analyze_image', async (req, res) => {
       thresholdUsed: threshold,
     };
 
-    return res.json(buildDiagnosisResponse(out, { source: 'plant_id', fallback: true, thresholdUsed: threshold }));
+    const finalResp = buildDiagnosisResponse(out, { source: 'plant_id', fallback: true, thresholdUsed: threshold });
+
+    // Save to analyses collection when possible. Include userId when authenticated.
+    try {
+      if (dbReady && analysesColl) {
+        const doc = {
+          userId: req.user?.userId ? (ObjectId.isValid(req.user.userId) ? new ObjectId(req.user.userId) : req.user.userId) : null,
+          timestamp: new Date(),
+          disease: finalResp.disease_name || null,
+          confidence: finalResp.confidenceValue ?? finalResp.confidence ?? null,
+          severity: finalResp.severity || null,
+          remedies: finalResp.treatment || null,
+          imageBase64: imageBase64 || null,
+          meta: { source: finalResp.source || null },
+        };
+
+        await analysesColl.insertOne(doc);
+      }
+    } catch (saveErr) {
+      console.warn('Failed to save analysis to DB:', saveErr?.message || saveErr);
+    }
+
+    return res.json(finalResp);
   } catch (err) {
     console.error('Analyze image route error:', err);
     return res.status(500).json({ success: false, error: 'Analyze image failed' });
